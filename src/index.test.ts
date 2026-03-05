@@ -61,6 +61,104 @@ metadata:
     assert.ok(!updatedContent.includes('hashFile('), 'All placeholders should be replaced');
   });
 
+  it('should replace hashFile(path) with full hash', async () => {
+    const sourcePath = join(workspaceRoot, 'configs/a.txt');
+    const manifestPath = join(workspaceRoot, 'manifests/full-hash.yaml');
+    const sourceContent = 'alpha-content';
+    await writeFileWithParents(sourcePath, sourceContent);
+    await writeFileWithParents(
+      manifestPath,
+      `value: \${{ hashFile('configs/a.txt') }}\n`
+    );
+
+    await processFiles('manifests/full-hash.yaml', 'sha256', true);
+    const updatedContent = await readFile(manifestPath, 'utf8');
+    assert.ok(updatedContent.includes(`value: ${sha256(sourceContent)}`), 'Should use full hash when length is not provided');
+  });
+
+  it('should replace hashFile(path, N) with truncated hash', async () => {
+    const sourcePath = join(workspaceRoot, 'configs/b.txt');
+    const manifestPath = join(workspaceRoot, 'manifests/short-hash.yaml');
+    const sourceContent = 'beta-content';
+    await writeFileWithParents(sourcePath, sourceContent);
+    await writeFileWithParents(
+      manifestPath,
+      `value: \${{ hashFile('configs/b.txt', 8) }}\n`
+    );
+
+    await processFiles('manifests/short-hash.yaml', 'sha256', true);
+    const updatedContent = await readFile(manifestPath, 'utf8');
+    assert.ok(updatedContent.includes(`value: ${sha256(sourceContent).slice(0, 8)}`), 'Should use first N hash characters');
+  });
+
+  it('should process mixed hashFile expressions with and without N in one file', async () => {
+    const onePath = join(workspaceRoot, 'configs/one.txt');
+    const twoPath = join(workspaceRoot, 'configs/two.txt');
+    const manifestPath = join(workspaceRoot, 'manifests/mixed-lengths.yaml');
+    const oneContent = 'one-content';
+    const twoContent = 'two-content';
+    await writeFileWithParents(onePath, oneContent);
+    await writeFileWithParents(twoPath, twoContent);
+
+    await writeFileWithParents(
+      manifestPath,
+      `full: \${{ hashFile('configs/one.txt') }}\nshort: \${{ hashFile('configs/two.txt', 12) }}\n`
+    );
+
+    await processFiles('manifests/mixed-lengths.yaml', 'sha256', true);
+    const updatedContent = await readFile(manifestPath, 'utf8');
+    assert.ok(updatedContent.includes(`full: ${sha256(oneContent)}`), 'Should keep full hash for single-arg expression');
+    assert.ok(updatedContent.includes(`short: ${sha256(twoContent).slice(0, 12)}`), 'Should truncate hash for two-arg expression');
+  });
+
+  it('should fail for invalid hash length 0', async () => {
+    const sourcePath = join(workspaceRoot, 'configs/invalid-zero.txt');
+    const manifestPath = join(workspaceRoot, 'manifests/invalid-zero.yaml');
+    await writeFileWithParents(sourcePath, 'invalid-zero');
+    await writeFileWithParents(manifestPath, `value: \${{ hashFile('configs/invalid-zero.txt', 0) }}\n`);
+
+    await assert.rejects(
+      () => processFiles('manifests/invalid-zero.yaml', 'sha256', true),
+      /Expected integer >= 1/
+    );
+  });
+
+  it('should fail for invalid hash length -1', async () => {
+    const sourcePath = join(workspaceRoot, 'configs/invalid-negative.txt');
+    const manifestPath = join(workspaceRoot, 'manifests/invalid-negative.yaml');
+    await writeFileWithParents(sourcePath, 'invalid-negative');
+    await writeFileWithParents(manifestPath, `value: \${{ hashFile('configs/invalid-negative.txt', -1) }}\n`);
+
+    await assert.rejects(
+      () => processFiles('manifests/invalid-negative.yaml', 'sha256', true),
+      /Expected integer >= 1/
+    );
+  });
+
+  it('should fail for non-numeric hash length', async () => {
+    const sourcePath = join(workspaceRoot, 'configs/invalid-string.txt');
+    const manifestPath = join(workspaceRoot, 'manifests/invalid-string.yaml');
+    await writeFileWithParents(sourcePath, 'invalid-string');
+    await writeFileWithParents(manifestPath, `value: \${{ hashFile('configs/invalid-string.txt', '8') }}\n`);
+
+    await assert.rejects(
+      () => processFiles('manifests/invalid-string.yaml', 'sha256', true),
+      /Expected integer >= 1/
+    );
+  });
+
+  it('should fail when requested hash length is greater than hash length', async () => {
+    const sourcePath = join(workspaceRoot, 'configs/invalid-long.txt');
+    const manifestPath = join(workspaceRoot, 'manifests/invalid-long.yaml');
+    await writeFileWithParents(sourcePath, 'invalid-long');
+    await writeFileWithParents(manifestPath, `value: \${{ hashFile('configs/invalid-long.txt', 999) }}\n`);
+
+    await assert.rejects(
+      () => processFiles('manifests/invalid-long.yaml', 'sha256', true),
+      /Requested 999, but hash length is 64/
+    );
+  });
+
   it('should not modify file if target file does not exist and throwIfFileNotExists is false', async () => {
     const deploymentFilePath = join(workspaceRoot, 'apps/swarm/deployment-missing.yaml');
     const deploymentContent = `

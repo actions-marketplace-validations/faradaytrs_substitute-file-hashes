@@ -1,6 +1,6 @@
 # Substitute File Hashes
 
-GitHub Action to replace `${{ hashFile('filepath') }}` with actual file hashes in files matching a glob pattern.
+GitHub Action to replace `${{ hashFile('filepath') }}` and `${{ hashFile('filepath', N) }}` with actual file hashes in files matching a glob pattern.
 Paths that start with `./` or `../` are resolved relative to the file currently being processed. Other paths are resolved from the workspace root.
 
 **Use cases**
@@ -17,7 +17,7 @@ spec:
   template:
     metadata:
       annotations:
-        config-hash: ${{ hashFile('./config/settings.json') }}
+        config-hash: ${{ hashFile('./config/settings.json', 12) }}
 ```
 
 After running this action, it will be transformed to:
@@ -32,7 +32,7 @@ spec:
   template:
     metadata:
       annotations:
-        config-hash: 8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92
+        config-hash: 8d969eef6eca
 ```
 
 **Workflow YAML**
@@ -63,6 +63,23 @@ Examples:
 - In `services/api/deployment.yaml`, `hashFile('./config/app.json')` resolves to `services/api/config/app.json`.
 - In `services/api/deployment.yaml`, `hashFile('../shared/config.json')` resolves to `services/shared/config.json`.
 - `hashFile('configs/global.json')` resolves from workspace root.
+
+## hashFile length argument
+
+You can use an optional second argument to limit the output hash length:
+
+- `hashFile('path/to/file')` -> full hash.
+- `hashFile('path/to/file', N)` -> first `N` characters of the hash.
+
+Rules for `N`:
+
+- `N` is optional.
+- `N` must be an integer `>= 1`.
+- `N` must not exceed the produced hash length for the chosen algorithm.
+
+If `N` is invalid, the action fails with an error that includes the file and expression.
+
+Use short hashes carefully: smaller `N` increases the risk of collisions.
 
 When `throwIfFileNotExists` is:
 - `true` (default): action fails if any referenced file does not exist after path resolution.

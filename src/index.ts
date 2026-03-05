@@ -12,7 +12,7 @@ export async function processFiles(
   core.info(`Searching for files matching: ${filesPattern}`);
   core.info(`Using hashing algorithm: ${algorithm}`);
 
-  const hashRegex = /\$\{\{\s*hashFile\(['"]([^'"]+)['"]\)\s*\}\}/g;
+  const hashRegex = /\$\{\{\s*hashFile\(([^)]*)\)\s*\}\}/g;
   const hashCache = new Map<string, Promise<string>>();
   const workspaceRoot = resolve(process.cwd());
 
@@ -44,7 +44,9 @@ export async function processFiles(
     const content = await readFile(absolutePath, 'utf8');
 
     let hasModifications = false;
-    const newContent = await replaceAsync(content, hashRegex, async (match, targetPath) => {
+    const newContent = await replaceAsync(content, hashRegex, async (match, argsRaw) => {
+      const parsedExpression = parseHashFileExpression(argsRaw, filePath, match);
+      const { path: targetPath, length } = parsedExpression;
       try {
         const targetAbsolutePath = resolveHashFilePath(targetPath, absolutePath, workspaceRoot);
         if (!isPathInsideWorkspace(targetAbsolutePath, workspaceRoot)) {
@@ -56,9 +58,10 @@ export async function processFiles(
           return match;
         }
         const hash = await getOrCreateHash(targetAbsolutePath);
-        core.info(`[${filePath}] Replaced ${match} with ${hash}`);
+        const finalHash = applyHashLength(hash, length, filePath, match);
+        core.info(`[${filePath}] Replaced ${match} with ${finalHash}`);
         hasModifications = true;
-        return hash;
+        return finalHash;
       } catch (error) {
         if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') {
           const missingFileMessage = `[${filePath}] File not found for hashFile('${targetPath}')`;
@@ -93,6 +96,42 @@ export function resolveHashFilePath(hashArg: string, currentFilePath: string, wo
 function isPathInsideWorkspace(targetPath: string, workspaceRoot: string): boolean {
   const pathDifference = relative(workspaceRoot, targetPath);
   return pathDifference === '' || (!pathDifference.startsWith('..') && !isAbsolute(pathDifference));
+}
+
+function parseHashFileExpression(argsRaw: string, filePath: string, expression: string): { path: string, length?: number } {
+  const argsMatch = argsRaw.match(/^\s*(['"])([^'"]+)\1(?:\s*,\s*(.+?)\s*)?$/);
+  if (!argsMatch) {
+    throw new Error(`[${filePath}] Invalid hashFile expression: ${expression}`);
+  }
+
+  const targetPath = argsMatch[2];
+  const lengthArg = argsMatch[3];
+  if (lengthArg === undefined) {
+    return { path: targetPath };
+  }
+
+  if (!/^-?\d+$/.test(lengthArg)) {
+    throw new Error(`[${filePath}] Invalid hash length in expression ${expression}. Expected integer >= 1.`);
+  }
+
+  const length = Number.parseInt(lengthArg, 10);
+  if (!Number.isInteger(length) || length < 1) {
+    throw new Error(`[${filePath}] Invalid hash length in expression ${expression}. Expected integer >= 1.`);
+  }
+
+  return { path: targetPath, length };
+}
+
+function applyHashLength(hash: string, length: number | undefined, filePath: string, expression: string): string {
+  if (length === undefined) {
+    return hash;
+  }
+  if (length > hash.length) {
+    throw new Error(
+      `[${filePath}] Invalid hash length in expression ${expression}. Requested ${length}, but hash length is ${hash.length}.`
+    );
+  }
+  return hash.slice(0, length);
 }
 
 async function run(): Promise<void> {
